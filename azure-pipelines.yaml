@@ -1,0 +1,61 @@
+name: MDA Infra Deployment
+
+trigger:
+  none
+
+pr:
+  branches:
+    include:
+    - main
+
+variables:
+  tfVersion: '1.0.0'
+
+stages:
+  - stage: Plan
+    displayName: Plan Stage
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    jobs:
+      - job: TerraformPlan
+        displayName: Terraform Plan
+        pool:
+          name: 'MDA DevOps Terraform Runners'  # Use a specific agent pool
+        steps:
+          - checkout: git://MDA_Terraform_Repo@main  # Checkout from a specific Azure Repo
+            persistCredentials: true
+
+          - script: |
+              echo "Initializing Terraform"
+              terraform init
+              terraform fmt
+              terraform validate
+              terraform plan -var-file=$(environment).tfvars
+            displayName: 'Run Terraform Plan'
+            env:
+              environment: $(Build.Environment)
+
+  - stage: Deploy
+    displayName: Deploy Stage
+    condition: and(succeeded(), eq(dependencies.Plan.outputs['Plan.jobName.isSuccessful'], 'true'))
+    jobs:
+      - deployment: TerraformApply
+        displayName: Terraform Apply
+        environment: 
+          name: prod-deploy
+          resourceType: VirtualMachine
+        pool:
+          name: 'MDA DevOps Terraform Runners'  # Use a specific agent pool
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: git://MDA_Terraform_Repo@main  # Ensure the same repository is used
+                - script: |
+                    echo "Applying Terraform"
+                    terraform init
+                    terraform fmt
+                    terraform validate
+                    terraform apply -var-file=$(environment).tfvars -auto-approve
+                  displayName: 'Run Terraform Apply'
+                - env:
+                    environment: $(Build.Environment)
